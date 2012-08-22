@@ -47,7 +47,7 @@ class Method(JavaClass):
     getParameterTypes = JavaMethod('()[Ljava/lang/Class;')
     getReturnType = JavaMethod('()Ljava/lang/Class;')
     getModifiers = JavaMethod('()I')
-
+    isVarArgs = JavaMethod('()B')
 
 class Field(JavaClass):
     __metaclass__ = MetaJavaClass
@@ -94,6 +94,8 @@ def ensureclass(clsname):
     registers.append(clsname)
     autoclass(clsname)
 
+def format_signature(method):
+    return ''.join([get_signature(x) for x in method.getParameterTypes()])
 
 def autoclass(clsname):
     jniname = clsname.replace('.', '/')
@@ -110,8 +112,7 @@ def autoclass(clsname):
 
     constructors = []
     for constructor in c.getConstructors():
-        sig = '({0})V'.format(
-            ''.join([get_signature(x) for x in constructor.getParameterTypes()]))
+        sig = '({0})V'.format(format_signature(constructor))
         constructors.append(sig)
     classDict['__javaconstructor__'] = constructors
 
@@ -126,9 +127,7 @@ def autoclass(clsname):
         # only one method available
         if count == 1:
             static = Modifier.isStatic(method.getModifiers())
-            sig = '({0}){1}'.format(
-                ''.join([get_signature(x) for x in method.getParameterTypes()]),
-                get_signature(method.getReturnType()))
+            sig = '({0}){1}'.format(format_signature(method))
             cls = JavaStaticMethod if static else JavaMethod
             classDict[name] = cls(sig)
             continue
@@ -139,9 +138,7 @@ def autoclass(clsname):
             if subname != name:
                 continue
             method = methods[index]
-            sig = '({0}){1}'.format(
-                ''.join([get_signature(x) for x in method.getParameterTypes()]),
-                get_signature(method.getReturnType()))
+            sig = '({0}){1}'.format(format_signature(method))
             '''
             print 'm', name, sig, method.getModifiers()
             m = method.getModifiers()

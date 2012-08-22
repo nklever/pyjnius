@@ -133,7 +133,9 @@ cdef class JavaClass(object):
             raise JavaException('No constructor available')
         elif len(definitions) == 1:
             definition = definitions[0]
+            # is_varargs = definition # TODO XXX
             d_ret, d_args = parse_definition(definition)
+            # if not self.isvarargs and len(args) != len(d_args):
             if len(args) != len(d_args):
                 raise JavaException('Invalid call, number of argument'
                         ' mismatch for constructor')
@@ -141,13 +143,16 @@ cdef class JavaClass(object):
             scores = []
             for definition in definitions:
                 d_ret, d_args = parse_definition(definition)
+                # score = calculate_score(d_args, args, is_varargs)
                 score = calculate_score(d_args, args)
                 if score == -1:
                     continue
+                # scores.append((score, definition, d_ret, d_args, is_varargs))
                 scores.append((score, definition, d_ret, d_args))
             if not scores:
                 raise JavaException('No constructor matching your arguments')
             scores.sort()
+            # score, definition, d_ret, d_args, is_varargs = scores[-1]
             score, definition, d_ret, d_args = scores[-1]
 
         try:
@@ -419,6 +424,7 @@ cdef class JavaMethod(object):
     cdef object is_static
     cdef object definition_return
     cdef object definition_args
+    cdef bint isvarargs
 
     def __cinit__(self, definition, **kwargs):
         self.j_method = NULL
@@ -449,6 +455,9 @@ cdef class JavaMethod(object):
             raise JavaException('Unable to find the method'
                     ' {0}({1})'.format(self.name, self.definition))
 
+        cdef jmethodID isVarArgId = self.j_env[0].GetMethodID(self.j_env, self.j_cls, 'isVarArgs', '()B')
+        self.isvarargs = self.j_env[0].CallBooleanMethodV(self.j_env, self.j_self.obj, isVarArgId, None)
+
     cdef void set_resolve_info(self, JNIEnv *j_env, jclass j_cls,
             LocalRef j_self, bytes name, bytes classname):
         self.name = name
@@ -470,17 +479,37 @@ cdef class JavaMethod(object):
         # argument array to pass to the method
         cdef jvalue *j_args = NULL
         cdef list d_args = self.definition_args
-        if len(args) != len(d_args):
+
+        self.ensure_method()
+
+        if len(args) != len(d_args) and not self.isvarargs:
             raise JavaException('Invalid call, number of argument mismatch')
+
+        elif self.isvarargs:
+            if len(args) >= len(d_args) - 1:
+                args, varargs = args[:len(d_args) - 1], args[len(d_args):]
+            else:
+                raise  JavaException('Invalid call, not enough arguments for call')
 
         if not self.is_static and self.j_env == NULL:
             raise JavaException('Cannot call instance method on a un-instanciated class')
 
-        self.ensure_method()
-
         try:
             # convert python argument if necessary
-            if len(args):
+            if self.isvarargs:
+                if len(varargs):
+                    j_args = <jvalue *>malloc(sizeof(jvalue) * len(varargs))
+                    if j_args == NULL:
+                        raise MemoryError('Unable to allocate memory for java varargs')
+                    populate_args(self.j_env, self.definition_args, j_args, args)
+
+                if len(args):
+                    j_varargs = <jvalue *>malloc(sizeof(jvalue) * len(d_args))
+                    if j_args == NULL:
+                        raise MemoryError('Unable to allocate memory for java args')
+                    populate_args(self.j_env, self.definition_args, j_args, args + [varargs])
+
+            elif len(args):
                 j_args = <jvalue *>malloc(sizeof(jvalue) * len(d_args))
                 if j_args == NULL:
                     raise MemoryError('Unable to allocate memory for java args')
@@ -713,6 +742,12 @@ cdef class JavaMultipleMethod(object):
             methods = self.static_methods
 
         for signature in methods:
+            if methods[signature].isvarargs:
+                # ??? need to find what is the kind of the array, how will we
+                # do that ??? is it always [J/java/lang/Object ?
+                # need to split all varargs in an array, and put this
+                # array as last element in args.
+                pass
             sign_ret, sign_args = parse_definition(signature)
             score = calculate_score(sign_args, args)
             if score <= 0:
@@ -720,7 +755,12 @@ cdef class JavaMultipleMethod(object):
             scores.append((score, signature))
 
         if not scores:
+            print methods
+            for m in methods:
+                print parse_definition(m)
+            print args
             raise JavaException('No methods matching your arguments')
+
         scores.sort()
         score, signature = scores[-1]
 
