@@ -121,6 +121,10 @@ cdef class JavaClass(object):
         cdef jvalue *j_args = NULL
         cdef jobject j_self = NULL
         cdef jmethodID constructor = NULL
+        cdef jmethodID get_class = NULL
+        cdef jclass method_class = NULL
+        cdef jmethodID is_varargs = NULL
+        cdef bint isvarargs = 0
 
         # get the constructor definition if exist
         definitions = ['()V']
@@ -133,17 +137,59 @@ cdef class JavaClass(object):
             raise JavaException('No constructor available')
         elif len(definitions) == 1:
             definition = definitions[0]
-            # is_varargs = definition # TODO XXX
+
+            constructor = self.j_env[0].GetMethodID(
+                self.j_env, self.j_cls, '<init>', <char *><bytes>definition)
+
+            get_class = self.j_env[0].GetMethodID(
+                self.j_env, self.j_cls, 'getClass', '()Ljava/lang/Class;')
+
+            method_class = self.j_env[0].CallObjectMethodA(
+                self.j_env, constructor, get_class, NULL)
+
+            is_varargs = self.j_env[0].GetMethodID(
+                self.j_env, method_class, 'isVarArgs', '()B')
+
+            isvarargs = self.j_env[0].CallBooleanMethodV(
+                self.j_env, constructor, is_varargs, None)
+
             d_ret, d_args = parse_definition(definition)
             # if not self.isvarargs and len(args) != len(d_args):
+            if isvarargs:
+                # put all args from the first vararg to the end, and put them
+                # in varargs, then add this array as last arg
+                args, varargs = args[:d_args - 1], args[d_args - 1:]
+                args.append(varargs)
+
             if len(args) != len(d_args):
                 raise JavaException('Invalid call, number of argument'
                         ' mismatch for constructor')
         else:
             scores = []
             for definition in definitions:
+                constructor = self.j_env[0].GetMethodID(
+                    self.j_env, self.j_cls, '<init>', <char *><bytes>definition)
+
+                get_class = self.j_env[0].GetMethodID(
+                    self.j_env, self.j_cls, 'getClass', '()Ljava/lang/Class;')
+
+                method_class = self.j_env[0].CallObjectMethodA(
+                    self.j_env, constructor, get_class, NULL)
+
+                is_varargs = self.j_env[0].GetMethodID(
+                    self.j_env, method_class, 'isVarArgs', '()B') 
+
+                isvarargs = self.j_env[0].CallBooleanMethodV(
+                    self.j_env, constructor, is_varargs, None)
+
                 d_ret, d_args = parse_definition(definition)
-                # score = calculate_score(d_args, args, is_varargs)
+
+                if isvarargs:
+                    # put all args from the first vararg to the end, and put them
+                    # in varargs, then add this array as last arg
+                    args, varargs = args[:d_args - 1], args[d_args - 1:]
+                    args.append(varargs)
+
                 score = calculate_score(d_args, args)
                 if score == -1:
                     continue
@@ -261,7 +307,7 @@ cdef class JavaField(object):
                     self.j_env, self.j_cls, <char *>self.name,
                     <char *>self.definition)
         if self.j_field == NULL:
-            raise JavaException('Unable to found the field {0}'.format(self.name))
+            raise JavaException('Unable to find the field {0}'.format(self.name))
 
     def __get__(self, obj, objtype):
         self.ensure_field()
